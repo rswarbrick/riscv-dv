@@ -18,6 +18,7 @@ Regression script for RISC-V random instruction generator
 
 import argparse
 import os
+import random
 import re
 import sys
 import logging
@@ -197,7 +198,7 @@ def do_simulate(sim_cmd, test_list, cwd, sim_opts, seed_yaml, seed, csr_file,
     cwd                   : Filesystem path to RISCV-DV repo
     sim_opts              : Simulation options for the generator
     seed_yaml             : Seed specification from a prior regression
-    seed                  : Seed to the instruction generator
+    seed                  : Seed to the instruction generator (for 1st test)
     csr_file              : YAML file containing description of all CSRs
     isa                   : Processor supported ISA subset
     end_signature_addr    : Address that tests will write pass/fail signature to at end of test
@@ -236,7 +237,7 @@ def do_simulate(sim_cmd, test_list, cwd, sim_opts, seed_yaml, seed, csr_file,
           if test_id in rerun_seed:
             rand_seed = rerun_seed[test_id]
           else:
-            rand_seed = get_seed(seed)
+            rand_seed = seed + i * batch_cnt
           if i < batch_cnt - 1:
             test_cnt = batch_size
           else:
@@ -644,7 +645,20 @@ def save_regr_report(report):
   logging.info("ISS regression report is saved to %s" % report)
 
 
-def setup_parser():
+def read_seed(arg):
+    '''Read an argument to the --seed command line value'''
+    try:
+        seed = int(arg)
+        if seed < 0:
+            raise ValueError('bad seed')
+        return seed
+
+    except ValueError:
+        raise argparse.ArgumentTypeError('Bad argument for --seed ({}): '
+                                         'must be a non-negative integer.'
+                                         .format(arg))
+
+def parse_args():
   """Create a command line parser.
 
   Returns: The created parser.
@@ -661,8 +675,11 @@ def setup_parser():
                       help="Regression testlist", dest="testlist")
   parser.add_argument("-tn", "--test", type=str, default="all",
                       help="Test name, 'all' means all tests in the list", dest="test")
-  parser.add_argument("--seed", type=int, default=-1,
-                      help="Randomization seed, default -1 means random seed")
+  parser.add_argument("--seed", type=read_seed,
+                      help=("Randomization seed to use for first iteration of "
+                            "each test. Subsequent iterations use seeds "
+                            "counting up from there. If --seed is not "
+                            "supplied, we pick a random starting seed."))
   parser.add_argument("-i", "--iterations", type=int, default=0,
                       help="Override the iteration count in the test list", dest="iterations")
   parser.add_argument("-si", "--simulator", type=str, default="vcs",
@@ -735,7 +752,13 @@ def setup_parser():
                       help="Run verilog style check")
   parser.add_argument("-d", "--debug", type=str, default="",
                       help="Generate debug command log file")
-  return parser
+
+  args = parser.parse_args()
+
+  if args.seed is None:
+    args.seed = random.getrandbits(31)
+
+  return args.seed
 
 
 def load_config(args, cwd):
@@ -812,8 +835,7 @@ def load_config(args, cwd):
 def main():
   """This is the main entry point."""
   try:
-    parser = setup_parser()
-    args = parser.parse_args()
+    args = parse_args()
     cwd = os.path.dirname(os.path.realpath(__file__))
     os.environ["RISCV_DV_ROOT"] = cwd
     setup_logging(args.verbose)
